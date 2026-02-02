@@ -53,6 +53,11 @@ def main():
         for item in raw_note_poses_off
     }
 
+    # ノートの順序（差分判定に使用）
+    note_index = {item["note"]: idx for idx, item in enumerate(raw_note_poses, start=1)}
+
+    print(note_index)
+
     bpm = score["bpm"]
     notes = score["notes"]
 
@@ -64,6 +69,14 @@ def main():
     robot.connect(calibrate=False)
 
     try:
+        prev_note = None
+        if notes:
+            first_note = notes[0]["note"]
+            init_off = note_poses_off.get(first_note)
+            if init_off is not None:
+                print(f"初期オフ姿勢へ移動: {first_note}")
+                robot.send_action({**init_off, "time_from_start": OFF_MOVE_TIME})
+                time.sleep(OFF_MOVE_TIME + 0.2)
         for n in notes:
             note = n["note"]
             length = n["length"]
@@ -80,9 +93,24 @@ def main():
 
             print(f"♪ {note} ({length})")
 
+            # 次の音が前音から2音以上離れている場合、まずその音のオフ姿勢へ移動してから叩く
+            need_preposition = False
+            if prev_note is not None and note in note_index and prev_note in note_index:
+                if abs(note_index[note] - note_index[prev_note]) >= 2:
+                    need_preposition = True
+            
+            if need_preposition:
+                pre_off = note_poses_off.get(note)
+                if pre_off is not None:
+                    print(f"  距離が大きいため、まず {note} のオフ姿勢へ移動します")
+                    robot.send_action({**pre_off, "time_from_start": OFF_MOVE_TIME})
+                    time.sleep(OFF_MOVE_TIME + 0.05)
+                else:
+                    print(f"  警告: {note} のオフ姿勢が未定義。直接移動します。")
+
             # --- 叩く位置へ ---
             robot.send_action({**target_pos, "time_from_start": move_time})
-            time.sleep(move_time + 1.5)
+            time.sleep(move_time + 0.05)
 
             # --- オフ姿勢へ戻す ---
             off_pos = note_poses_off.get(note)
@@ -95,7 +123,9 @@ def main():
             time.sleep(max(0.0, hold_time))
 
             robot.send_action({**off_pos, "time_from_start": lift_time})
-            time.sleep(lift_time + 1.5)
+            time.sleep(lift_time + 0.05)
+
+            prev_note = note
 
     finally:
         robot.disconnect()
